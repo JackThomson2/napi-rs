@@ -6,6 +6,7 @@ use std::mem;
 #[cfg(feature = "napi4")]
 use std::os::raw::c_char;
 use std::ptr;
+use std::cell::UnsafeCell;
 use std::sync::{
   atomic::{AtomicBool, AtomicPtr, Ordering},
   Mutex,
@@ -73,25 +74,23 @@ impl<T> PersistedSingleThreadVec<T> {
 unsafe impl<T> Send for PersistedSingleThreadVec<T> {}
 unsafe impl<T> Sync for PersistedSingleThreadVec<T> {}
 
-pub(crate) struct PersistedSingleThreadHashMap<K, V>(Mutex<HashMap<K, V>>);
+pub(crate) struct PersistedSingleThreadHashMap<K, V>(UnsafeCell<HashMap<K, V>>);
 
 impl<K, V> PersistedSingleThreadHashMap<K, V> {
   #[allow(clippy::mut_from_ref)]
+  #[inline(always)]
   pub(crate) fn borrow_mut<F, R>(&self, f: F) -> R
   where
     F: FnOnce(&mut HashMap<K, V>) -> R,
   {
-    let mut lock = self
-      .0
-      .lock()
-      .expect("Acquire persisted thread hash map lock failed");
-    f(&mut *lock)
+    let res = unsafe { &mut (*self.0.get()) };
+    f(res)
   }
 }
 
 impl<K, V> Default for PersistedSingleThreadHashMap<K, V> {
   fn default() -> Self {
-    PersistedSingleThreadHashMap(Mutex::new(Default::default()))
+    PersistedSingleThreadHashMap(UnsafeCell::new(Default::default()))
   }
 }
 
@@ -400,7 +399,7 @@ unsafe extern "C" fn napi_register_module_v1(
           }
           let (ctor, props): (Vec<_>, Vec<_>) = props.iter().partition(|prop| prop.is_ctor);
 
-          let ctor = ctor.get(0).map(|c| c.raw().method.unwrap()).unwrap_or(noop);
+          let ctor = ctor.get(0).map(|c| c.raw().method.unwrap()).unwrap_or_else(|| noooop);
           let raw_props: Vec<_> = props.iter().map(|prop| prop.raw()).collect();
 
           let js_class_name = CStr::from_bytes_with_nul_unchecked(js_name.as_bytes());
@@ -485,10 +484,12 @@ unsafe extern "C" fn napi_register_module_v1(
   exports
 }
 
-pub(crate) unsafe extern "C" fn noop(
+#[inline(always)]
+pub(crate) unsafe extern "C" fn noooop(
   env: sys::napi_env,
   _info: sys::napi_callback_info,
 ) -> sys::napi_value {
+  return ptr::null_mut();
   let inner = crate::bindgen_runtime::___CALL_FROM_FACTORY.get_or_default();
   if !inner.load(Ordering::Relaxed) {
     unsafe {

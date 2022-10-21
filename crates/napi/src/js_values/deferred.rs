@@ -19,7 +19,7 @@ unsafe impl<Data: ToNapiValue, Resolver: FnOnce(Env) -> Result<Data>> Send
 }
 
 impl<Data: ToNapiValue, Resolver: FnOnce(Env) -> Result<Data>> JsDeferred<Data, Resolver> {
-  pub(crate) fn new(env: sys::napi_env) -> Result<(Self, JsObject)> {
+  pub fn new(env: sys::napi_env) -> Result<(Self, JsObject)> {
     let mut raw_promise = ptr::null_mut();
     let mut raw_deferred = ptr::null_mut();
     check_status! {
